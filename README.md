@@ -1,6 +1,6 @@
 # TradeMe House Image Downloader
 
-Chrome extension that downloads all property photos from a TradeMe residential
+Chrome extension that downloads all property photos from a TradeMe property
 listing page in one click, saving them to a folder the user picks.
 
 ## Why
@@ -10,8 +10,8 @@ it tedious to save every image by hand (right-click → save one at a time).
 
 ## How it works
 
-1. Click the extension's toolbar icon while viewing a TradeMe residential
-   listing page.
+1. Click the extension's toolbar icon while viewing a TradeMe property
+   listing page (any category — residential, new homes, etc.).
 2. The extension detects the listing, shows the property address, and scans
    the page for all photo URLs (driving the photo carousel if needed), and
    asks you to pick a destination folder.
@@ -42,10 +42,12 @@ npm test
 
 ## Status
 
-Working — smoke-tested against a live listing (extraction + download, folder
-picker, address display) with no failures. Not yet checked against a
-non-premium or rental listing, which may use different page markup for the
-photo carousel and/or address.
+Working — smoke-tested against a live residential listing (extraction +
+download, folder picker, address display) with no failures. URL matching
+covers every property category (residential, new homes, etc.), but the
+carousel/address page markup has only actually been exercised on one
+premium-tier residential listing — other categories or a non-premium/rental
+listing may render the gallery/address differently.
 
 Progress notes are kept in a local, gitignored `handoff/` directory (Three Man
 Team workflow) and aren't part of this repository.

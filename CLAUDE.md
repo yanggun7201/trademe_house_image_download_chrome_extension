@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Chrome extension (Manifest V3) that downloads all photos from a TradeMe
-residential property listing page to a user-chosen folder, and shows the
+property listing page (any category) to a user-chosen folder, and shows the
 property address on the result page.
 
 ## Architecture
@@ -23,9 +23,11 @@ property address on the result page.
   service worker's.
 
 ## Known open items
-- Only verified against one premium-tier residential listing. The
-  `.platinum-hero-carousel` and `.property-info__address` selectors haven't
-  been checked against a non-premium or rental listing, which may differ.
+- `LISTING_URL_PATTERN` matches any `/a/property/.../listing/<id>` URL
+  (not scoped to "residential" — that was too narrow, missed e.g. "new-homes").
+  But the `.platinum-hero-carousel` and `.property-info__address` selectors
+  have only actually been exercised on one premium-tier residential listing —
+  other categories or a non-premium/rental listing may render differently.
 - No bundler/build step on purpose — keep it that way unless there's a real
   need; ES modules work natively in both Chrome extension pages and Node.
 
