@@ -1,5 +1,4 @@
-const LISTING_URL_PATTERN =
-  /^https:\/\/www\.trademe\.co\.nz\/a\/property\/residential\/.+\/listing\/\d+/;
+import { LISTING_URL_PATTERN } from './lib/download-helpers.js';
 
 // Injected directly into the listing tab via chrome.scripting.executeScript.
 // Must be fully self-contained — no references to anything outside this function.
@@ -59,11 +58,13 @@ async function extractImageUrls() {
   const maxClicks = safetyTarget + 5;
   const pollTimeoutMs = 2000;
   const pollIntervalMs = 100;
-  // Independent of displayedCount: if several clicks in a row add no new unique
-  // photo, the carousel has wrapped around (or stalled) and more clicking won't
-  // help — stop early instead of always burning the full click budget. This
-  // matters most when displayedCount couldn't be parsed, since the size-based
-  // stop condition below never kicks in for that case.
+  // Only relevant when displayedCount couldn't be parsed: in that case the
+  // size-based stop condition below never kicks in, so without this the loop
+  // always burns the full click budget (up to ~110s) even on a tiny listing.
+  // Scoped to the null-count case only — when displayedCount is known, a slow
+  // CDN/transition could plausibly cause 3 real (not-yet-wrapped-around)
+  // timeouts in a row, and the existing count-reached/click-cap conditions
+  // already bound that case safely without this extra, coarser heuristic.
   const maxStaleClicks = 3;
   let clicks = 0;
   let staleClicks = 0;
@@ -71,7 +72,7 @@ async function extractImageUrls() {
   while (
     (displayedCount === null || uniquePhotos.size < displayedCount) &&
     clicks < maxClicks &&
-    staleClicks < maxStaleClicks
+    (displayedCount !== null || staleClicks < maxStaleClicks)
   ) {
     // Re-query the container and arrow each iteration rather than holding a stale
     // reference — the carousel is an Angular component that could re-render its wrapper.
@@ -157,8 +158,10 @@ chrome.action.onClicked.addListener(async (tab) => {
   tabsInFlight.add(tab.id);
   // Extraction can take many seconds (carousel click-and-poll) with no other
   // visible sign anything is happening — a badge on the icon is the cheapest
-  // signal that the click registered and work is in progress.
-  await chrome.action.setBadgeText({ tabId: tab.id, text: '…' });
+  // signal that the click registered and work is in progress. Best-effort only:
+  // if the tab closed between the click and here, this rejects, and it must
+  // never be allowed to take down the rest of the handler with it.
+  await chrome.action.setBadgeText({ tabId: tab.id, text: '…' }).catch(() => {});
   let job;
   try {
     const [injection] = await chrome.scripting.executeScript({
@@ -180,7 +183,9 @@ chrome.action.onClicked.addListener(async (tab) => {
     job = { jobId, status: 'error' };
   } finally {
     tabsInFlight.delete(tab.id);
-    await chrome.action.setBadgeText({ tabId: tab.id, text: '' });
+    // Same best-effort reasoning as above: if the tab closed mid-extraction,
+    // this must not throw and discard the already-computed `job`.
+    await chrome.action.setBadgeText({ tabId: tab.id, text: '' }).catch(() => {});
   }
 
   await openResultTab(job);

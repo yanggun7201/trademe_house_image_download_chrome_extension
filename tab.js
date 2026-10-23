@@ -42,7 +42,13 @@ function renderStatus(images, displayedCount) {
 function renderProgress(downloaded, total, failures) {
   progressView.hidden = false;
   if (downloaded + failures.length >= total) {
-    progressText.textContent = `Done. Downloaded ${downloaded} of ${total} images.`;
+    if (failures.length > 0) {
+      progressText.textContent = `Done. Downloaded ${downloaded} of ${total} images — ${failures.length} failed.`;
+      progressText.className = 'warning';
+    } else {
+      progressText.textContent = `Done. Downloaded ${downloaded} of ${total} images.`;
+      progressText.className = '';
+    }
   } else {
     progressText.textContent = `Downloading… ${downloaded + failures.length} / ${total}`;
   }
@@ -66,17 +72,25 @@ async function downloadAll(images, dirHandle) {
   }
   for (let i = 0; i < images.length; i++) {
     const { url, id } = images[i];
+    const photoId = id || String(i + 1);
     let fileHandle = null;
     let writable = null;
     let filename = null;
+    let createdNewFile = false;
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get('content-type');
       const blob = await response.blob();
       const ext = extFromContentType(contentType) || extFromUrl(url);
-      const photoId = id || String(i + 1);
       filename = `${i + 1}-${photoId}.${ext}`;
+      // Re-running into the same folder reuses this exact filename — check
+      // whether it already exists *before* touching it, so a failure below
+      // never deletes a good file left by an earlier successful run.
+      createdNewFile = await dirHandle.getFileHandle(filename).then(
+        () => false,
+        () => true
+      );
       fileHandle = await dirHandle.getFileHandle(filename, { create: true });
       writable = await fileHandle.createWritable();
       await writable.write(blob);
@@ -85,10 +99,9 @@ async function downloadAll(images, dirHandle) {
       downloaded++;
     } catch (err) {
       if (writable) await writable.abort().catch(() => {});
-      // getFileHandle(..., {create: true}) creates the file immediately, so a
-      // failure after that point would otherwise leave an empty file behind
-      // that looks like a successful download.
-      if (fileHandle && filename) await dirHandle.removeEntry(filename).catch(() => {});
+      // Only clean up a file this attempt actually created — never remove one
+      // that predates this run.
+      if (fileHandle && createdNewFile) await dirHandle.removeEntry(filename).catch(() => {});
       failures.push({ index: i + 1, error: err.message || String(err) });
     }
     renderProgress(downloaded, images.length, failures);
