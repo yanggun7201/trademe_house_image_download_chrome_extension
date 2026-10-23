@@ -121,7 +121,10 @@ function showMain(job) {
     if (picking) return;
     picking = true;
     try {
-      const dirHandle = await window.showDirectoryPicker();
+      // Request write access up front in the same prompt — asking for it later
+      // (implicitly, via getFileHandle/createWritable) risks a second permission
+      // request after the click's transient user activation has expired.
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
       // A prior cancel/failure attempt may have left an error message showing —
       // restore the normal "Found N images" status now that a folder was picked.
       renderStatus(job.images, job.displayedCount);
