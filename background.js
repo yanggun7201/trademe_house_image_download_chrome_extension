@@ -1,4 +1,4 @@
-import { LISTING_URL_PATTERN } from './lib/download-helpers.js';
+import { LISTING_URL_PATTERN, sortPhotosBySlide } from './lib/download-helpers.js';
 
 // Injected directly into the listing tab via chrome.scripting.executeScript.
 // Must be fully self-contained — no references to anything outside this function.
@@ -38,7 +38,10 @@ async function extractImageUrls() {
   }
 
   if (!document.querySelector('.platinum-hero-carousel')) {
-    return { images: [], displayedCount };
+    // Distinct from "found 0 images on a real listing" — this listing's photo
+    // gallery isn't in the one DOM shape this extension knows how to read,
+    // which is a meaningfully different thing to tell the user.
+    return { photos: [], displayedCount, noGallery: true };
   }
 
   function mergeMountedSlides(uniquePhotos) {
@@ -104,23 +107,10 @@ async function extractImageUrls() {
     staleClicks = uniquePhotos.size > sizeBefore ? 0 : staleClicks + 1;
   }
 
-  // Items without a parsed slideNumber keep their discovery order, appended after
-  // every item that does have one — explicit tie-breaking instead of comparing
-  // two Infinity fallbacks (which would compute NaN and rely on stable-sort luck).
-  const images = Array.from(uniquePhotos.values())
-    .map((photo, index) => ({ photo, index }))
-    .sort((a, b) => {
-      const aHas = a.photo.slideNumber !== null;
-      const bHas = b.photo.slideNumber !== null;
-      if (aHas && bHas) return a.photo.slideNumber - b.photo.slideNumber;
-      if (aHas !== bHas) return aHas ? -1 : 1;
-      return a.index - b.index;
-    })
-    // {url, id} pairs so tab.js never needs its own copy of the photo-ID regex —
-    // only this self-contained injected function needs one.
-    .map(({ photo }) => ({ url: photo.url, id: photo.id }));
-
-  return { images, displayedCount };
+  // Sorting happens back in background.js (see the click handler below) using
+  // the shared, unit-tested sortPhotosBySlide — return the raw deduped photos
+  // (with id/url/slideNumber) rather than duplicating that logic in here.
+  return { photos: Array.from(uniquePhotos.values()), displayedCount, noGallery: false };
 }
 
 // Guards against a double-click firing two concurrent extraction runs against the
@@ -133,7 +123,21 @@ const tabsInFlight = new Set();
 async function openResultTab(job) {
   try {
     await chrome.storage.session.set({ [job.jobId]: job });
-    await chrome.tabs.create({ url: chrome.runtime.getURL(`tab.html?job=${job.jobId}`) });
+    const resultTab = await chrome.tabs.create({ url: chrome.runtime.getURL(`tab.html?job=${job.jobId}`) });
+    // Belt-and-suspenders cleanup: tab.js already removes 'ok' jobs once the user
+    // commits to a folder, and 'unsupported'/'error'/'no_gallery' jobs immediately.
+    // This catches the case nothing else does — the user closes the result tab
+    // without ever picking a folder — so abandoned jobs can't accumulate in
+    // chrome.storage.session for the rest of the browser session.
+    if (resultTab && resultTab.id !== undefined) {
+      const onClosed = (closedTabId) => {
+        if (closedTabId === resultTab.id) {
+          chrome.storage.session.remove(job.jobId).catch(() => {});
+          chrome.tabs.onRemoved.removeListener(onClosed);
+        }
+      };
+      chrome.tabs.onRemoved.addListener(onClosed);
+    }
   } catch (err) {
     // Nothing else can show the user feedback at this point (the tab that would
     // display it is exactly what failed to open) — at least don't leave an
@@ -173,8 +177,16 @@ chrome.action.onClicked.addListener(async (tab) => {
     // never gets conflated with "found 0 images on a real listing".
     if (!injection || !injection.result) {
       job = { jobId, status: 'error' };
+    } else if (injection.result.noGallery) {
+      // Distinct from "ok, found 0 images" — the page didn't have the expected
+      // gallery markup at all, which reads to the user very differently.
+      job = { jobId, status: 'no_gallery' };
     } else {
-      job = { jobId, status: 'ok', images: injection.result.images, displayedCount: injection.result.displayedCount };
+      const images = sortPhotosBySlide(injection.result.photos).map((photo) => ({
+        url: photo.url,
+        id: photo.id,
+      }));
+      job = { jobId, status: 'ok', images, displayedCount: injection.result.displayedCount };
     }
   } catch (err) {
     // Injection genuinely failed (tab navigated away, page blocked it, etc.) — this

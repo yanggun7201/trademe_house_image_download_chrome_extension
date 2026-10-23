@@ -16,6 +16,24 @@ it tedious to save every image by hand (right-click → save one at a time).
    asks you to pick a destination folder.
 3. All photos are downloaded into that folder.
 
+Keep the listing tab in the foreground (don't switch away) while the toolbar
+badge shows `…` — Chrome throttles timers and animations in background tabs,
+which can make the extraction take longer or stop early.
+
+## Install (unpacked, for development)
+
+1. Open `chrome://extensions`.
+2. Enable "Developer mode" (top right).
+3. Click "Load unpacked" and select this project's folder.
+
+## Development
+
+Run the unit tests for the pure helper functions (`lib/download-helpers.js`):
+
+```
+npm test
+```
+
 ## Status
 
 Early development. Progress notes are kept in a local, gitignored `handoff/`

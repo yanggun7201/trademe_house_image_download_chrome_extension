@@ -3,6 +3,7 @@ import { extFromContentType, extFromUrl } from './lib/download-helpers.js';
 const unsupportedView = document.getElementById('unsupported-view');
 const expiredView = document.getElementById('expired-view');
 const errorView = document.getElementById('error-view');
+const noGalleryView = document.getElementById('no-gallery-view');
 const mainView = document.getElementById('main-view');
 const statusText = document.getElementById('status-text');
 const pickFolderBtn = document.getElementById('pick-folder-btn');
@@ -24,8 +25,15 @@ function showError() {
   errorView.hidden = false;
 }
 
+function showNoGallery() {
+  noGalleryView.hidden = false;
+}
+
 function renderStatus(images, displayedCount) {
-  if (displayedCount !== null && displayedCount !== images.length) {
+  if (displayedCount !== null && images.length < displayedCount) {
+    // Only warn on an undercount — finding more than the page's displayed
+    // total (e.g. an extra floorplan slide the carousel also exposes) isn't a
+    // problem worth a warning.
     statusText.textContent = `Found ${images.length} of ${displayedCount} images`;
     statusText.className = 'warning';
   } else if (displayedCount === null) {
@@ -77,19 +85,28 @@ async function downloadAll(images, dirHandle) {
     let writable = null;
     let filename = null;
     let createdNewFile = false;
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 15000);
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: abortController.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get('content-type');
+      // A 200 with a non-image body (e.g. an HTML error/captive-portal page)
+      // must not be treated as a successful photo download.
+      if (contentType && !contentType.toLowerCase().startsWith('image/')) {
+        throw new Error(`Unexpected content-type: ${contentType}`);
+      }
       const blob = await response.blob();
       const ext = extFromContentType(contentType) || extFromUrl(url);
       filename = `${i + 1}-${photoId}.${ext}`;
       // Re-running into the same folder reuses this exact filename — check
       // whether it already exists *before* touching it, so a failure below
-      // never deletes a good file left by an earlier successful run.
+      // never deletes a good file left by an earlier successful run. Only a
+      // definite "not found" counts as new; any other error here (e.g. a
+      // transient permission/IO error) is treated as "leave it alone".
       createdNewFile = await dirHandle.getFileHandle(filename).then(
         () => false,
-        () => true
+        (err) => err.name === 'NotFoundError'
       );
       fileHandle = await dirHandle.getFileHandle(filename, { create: true });
       writable = await fileHandle.createWritable();
@@ -102,7 +119,10 @@ async function downloadAll(images, dirHandle) {
       // Only clean up a file this attempt actually created — never remove one
       // that predates this run.
       if (fileHandle && createdNewFile) await dirHandle.removeEntry(filename).catch(() => {});
-      failures.push({ index: i + 1, error: err.message || String(err) });
+      const message = err.name === 'AbortError' ? 'Timed out' : err.message || String(err);
+      failures.push({ index: i + 1, error: message });
+    } finally {
+      clearTimeout(timeoutId);
     }
     renderProgress(downloaded, images.length, failures);
   }
@@ -184,6 +204,12 @@ async function init() {
   if (job.status === 'error') {
     chrome.storage.session.remove(jobId).catch(() => {});
     showError();
+    return;
+  }
+
+  if (job.status === 'no_gallery') {
+    chrome.storage.session.remove(jobId).catch(() => {});
+    showNoGallery();
     return;
   }
 
