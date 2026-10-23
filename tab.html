@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TradeMe House Image Downloader</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        max-width: 560px;
+        margin: 48px auto;
+        padding: 0 24px;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 1.25rem;
+      }
+      .warning {
+        color: #8a5a00;
+        background: #fff6e5;
+        border: 1px solid #f0c674;
+        border-radius: 6px;
+        padding: 8px 12px;
+      }
+      .error {
+        color: #8a1f1f;
+      }
+      button {
+        font-size: 1rem;
+        padding: 8px 16px;
+        cursor: pointer;
+      }
+      ul {
+        padding-left: 20px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>TradeMe House Image Downloader</h1>
+
+    <div id="unsupported-view" hidden>
+      <p>This page isn't a TradeMe residential listing. Open the extension from a listing page.</p>
+    </div>
+
+    <div id="expired-view" hidden>
+      <p>This session expired — click the extension icon again from the listing page.</p>
+    </div>
+
+    <div id="error-view" hidden>
+      <p class="error">Couldn't read the listing's photos. Go back to the listing tab and click the extension icon again.</p>
+    </div>
+
+    <div id="main-view" hidden>
+      <p id="status-text"></p>
+      <button id="pick-folder-btn">Choose folder and download</button>
+      <button id="retry-btn" hidden>Choose folder</button>
+
+      <div id="progress-view" hidden>
+        <p id="progress-text"></p>
+        <div id="failures-section" hidden>
+          <p>Some images failed:</p>
+          <ul id="failures-list"></ul>
+        </div>
+      </div>
+    </div>
+
+    <script src="tab.js"></script>
+  </body>
+</html>
