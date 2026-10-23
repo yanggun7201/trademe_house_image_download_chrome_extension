@@ -6,6 +6,7 @@ const unsupportedView = document.getElementById('unsupported-view');
 const expiredView = document.getElementById('expired-view');
 const errorView = document.getElementById('error-view');
 const noGalleryView = document.getElementById('no-gallery-view');
+const addressText = document.getElementById('address-text');
 const mainView = document.getElementById('main-view');
 const statusText = document.getElementById('status-text');
 const pickFolderBtn = document.getElementById('pick-folder-btn');
@@ -29,6 +30,12 @@ function showError() {
 
 function showNoGallery() {
   noGalleryView.hidden = false;
+}
+
+function renderAddress(address) {
+  if (!address) return;
+  addressText.textContent = address;
+  addressText.hidden = false;
 }
 
 function renderStatus(images, displayedCount) {
@@ -135,6 +142,7 @@ async function downloadAll(images, dirHandle) {
 
 function showMain(job) {
   mainView.hidden = false;
+  renderAddress(job.address);
   renderStatus(job.images, job.displayedCount);
 
   if (job.images.length === 0) {
@@ -218,6 +226,7 @@ async function init() {
 
   if (job.status === 'no_gallery') {
     chrome.storage.session.remove(jobId).catch(() => {});
+    renderAddress(job.address);
     showNoGallery();
     return;
   }

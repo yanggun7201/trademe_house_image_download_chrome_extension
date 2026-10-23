@@ -39,6 +39,10 @@ async function extractImageUrls() {
 
   console.log(`${LOG_PREFIX} extractImageUrls: starting`);
 
+  const addressEl = document.querySelector('.property-info__address');
+  const address = addressEl ? addressEl.textContent.trim().replace(/\s+/g, ' ') : null;
+  console.log(`${LOG_PREFIX} address parsed as:`, address);
+
   let displayedCount = null;
   const viewImagesBtn = document.querySelector('button[aria-label="View images"]');
   if (viewImagesBtn) {
@@ -52,7 +56,7 @@ async function extractImageUrls() {
     // Distinct from "found 0 images on a real listing" — this listing's photo
     // gallery isn't in the one DOM shape this extension knows how to read,
     // which is a meaningfully different thing to tell the user.
-    return { photos: [], displayedCount, noGallery: true };
+    return { photos: [], displayedCount, noGallery: true, address };
   }
 
   function mergeMountedSlides(uniquePhotos) {
@@ -152,7 +156,7 @@ async function extractImageUrls() {
   // Sorting happens back in background.js (see the click handler below) using
   // the shared, unit-tested sortPhotosBySlide — return the raw deduped photos
   // (with id/url/slideNumber) rather than duplicating that logic in here.
-  return { photos: Array.from(uniquePhotos.values()), displayedCount, noGallery: false };
+  return { photos: Array.from(uniquePhotos.values()), displayedCount, noGallery: false, address };
 }
 
 // Guards against a double-click firing two concurrent extraction runs against the
@@ -247,14 +251,20 @@ chrome.action.onClicked.addListener(async (tab) => {
     } else if (injection.result.noGallery) {
       // Distinct from "ok, found 0 images" — the page didn't have the expected
       // gallery markup at all, which reads to the user very differently.
-      job = { jobId, status: 'no_gallery' };
+      job = { jobId, status: 'no_gallery', address: injection.result.address };
     } else {
       const images = sortPhotosBySlide(injection.result.photos).map((photo) => ({
         url: photo.url,
         id: photo.id,
       }));
-      job = { jobId, status: 'ok', images, displayedCount: injection.result.displayedCount };
-      console.log(`${LOG_PREFIX} job`, jobId, '— extraction ok:', images.length, 'image(s), displayedCount =', injection.result.displayedCount);
+      job = {
+        jobId,
+        status: 'ok',
+        images,
+        displayedCount: injection.result.displayedCount,
+        address: injection.result.address,
+      };
+      console.log(`${LOG_PREFIX} job`, jobId, '— extraction ok:', images.length, 'image(s), displayedCount =', injection.result.displayedCount, ', address =', injection.result.address);
     }
   } catch (err) {
     // Injection genuinely failed (tab navigated away, page blocked it, etc.) — this
