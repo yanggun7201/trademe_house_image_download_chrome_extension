@@ -12,9 +12,10 @@ it tedious to save every image by hand (right-click → save one at a time).
 
 1. Click the extension's toolbar icon while viewing a TradeMe residential
    listing page.
-2. The extension detects the listing, scans the page for all photo URLs, and
+2. The extension detects the listing, shows the property address, and scans
+   the page for all photo URLs (driving the photo carousel if needed), and
    asks you to pick a destination folder.
-3. All photos are downloaded into that folder.
+3. All photos are downloaded into that folder as `{order}-{photoId}.{ext}`.
 
 Keep the listing tab in the foreground (don't switch away) while the toolbar
 badge shows `…` — Chrome throttles timers and animations in background tabs,
@@ -41,5 +42,10 @@ npm test
 
 ## Status
 
-Early development. Progress notes are kept in a local, gitignored `handoff/`
-directory (Three Man Team workflow) and aren't part of this repository.
+Working — smoke-tested against a live listing (extraction + download, folder
+picker, address display) with no failures. Not yet checked against a
+non-premium or rental listing, which may use different page markup for the
+photo carousel and/or address.
+
+Progress notes are kept in a local, gitignored `handoff/` directory (Three Man
+Team workflow) and aren't part of this repository.
