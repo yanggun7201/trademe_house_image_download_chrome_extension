@@ -1,3 +1,5 @@
+import { extFromContentType, extFromUrl } from './lib/download-helpers.js';
+
 const unsupportedView = document.getElementById('unsupported-view');
 const expiredView = document.getElementById('expired-view');
 const errorView = document.getElementById('error-view');
@@ -9,30 +11,6 @@ const progressView = document.getElementById('progress-view');
 const progressText = document.getElementById('progress-text');
 const failuresSection = document.getElementById('failures-section');
 const failuresList = document.getElementById('failures-list');
-
-const CONTENT_TYPE_EXT = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'image/avif': 'avif',
-};
-
-function extFromContentType(contentType) {
-  if (!contentType) return null;
-  const mime = contentType.split(';')[0].trim().toLowerCase();
-  return CONTENT_TYPE_EXT[mime] || null;
-}
-
-function extFromUrl(url) {
-  const match = new URL(url).pathname.match(/\.([a-zA-Z0-9]{2,4})$/);
-  return match ? match[1].toLowerCase() : 'jpg';
-}
-
-function getPhotoId(url) {
-  const match = url.match(/(\d+)\.\w+(?:\?.*)?$/);
-  return match ? match[1] : null;
-}
 
 function showUnsupported() {
   unsupportedView.hidden = false;
@@ -49,6 +27,11 @@ function showError() {
 function renderStatus(images, displayedCount) {
   if (displayedCount !== null && displayedCount !== images.length) {
     statusText.textContent = `Found ${images.length} of ${displayedCount} images`;
+    statusText.className = 'warning';
+  } else if (displayedCount === null) {
+    // The page's own photo count couldn't be read, so there's nothing to compare
+    // against — say so rather than implying this count is verified complete.
+    statusText.textContent = `Found ${images.length} images (total count unavailable)`;
     statusText.className = 'warning';
   } else {
     statusText.textContent = `Found ${images.length} images`;
@@ -82,17 +65,19 @@ async function downloadAll(images, dirHandle) {
     return;
   }
   for (let i = 0; i < images.length; i++) {
-    const url = images[i];
+    const { url, id } = images[i];
+    let fileHandle = null;
     let writable = null;
+    let filename = null;
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get('content-type');
       const blob = await response.blob();
       const ext = extFromContentType(contentType) || extFromUrl(url);
-      const photoId = getPhotoId(url) || String(i + 1);
-      const filename = `${i + 1}-${photoId}.${ext}`;
-      const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+      const photoId = id || String(i + 1);
+      filename = `${i + 1}-${photoId}.${ext}`;
+      fileHandle = await dirHandle.getFileHandle(filename, { create: true });
       writable = await fileHandle.createWritable();
       await writable.write(blob);
       await writable.close();
@@ -100,6 +85,10 @@ async function downloadAll(images, dirHandle) {
       downloaded++;
     } catch (err) {
       if (writable) await writable.abort().catch(() => {});
+      // getFileHandle(..., {create: true}) creates the file immediately, so a
+      // failure after that point would otherwise leave an empty file behind
+      // that looks like a successful download.
+      if (fileHandle && filename) await dirHandle.removeEntry(filename).catch(() => {});
       failures.push({ index: i + 1, error: err.message || String(err) });
     }
     renderProgress(downloaded, images.length, failures);
@@ -111,6 +100,8 @@ function showMain(job) {
   renderStatus(job.images, job.displayedCount);
 
   if (job.images.length === 0) {
+    // Nothing worth protecting against a reload — clean up now.
+    chrome.storage.session.remove(job.jobId).catch(() => {});
     pickFolderBtn.hidden = true;
     return;
   }
@@ -125,6 +116,11 @@ function showMain(job) {
       // (implicitly, via getFileHandle/createWritable) risks a second permission
       // request after the click's transient user activation has expired.
       const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      // Only clean up the job once the user has actually committed to a folder —
+      // keeping it until now means an accidental reload (or cancelling the
+      // picker) while still deciding doesn't lose the whole carousel-driven
+      // photo list and force redoing it.
+      chrome.storage.session.remove(job.jobId).catch(() => {});
       // A prior cancel/failure attempt may have left an error message showing —
       // restore the normal "Found N images" status now that a folder was picked.
       renderStatus(job.images, job.displayedCount);
@@ -163,16 +159,17 @@ async function init() {
     return;
   }
 
-  // The job record is only ever needed once, by this tab, right now — drop it so
-  // repeated clicks on the toolbar icon don't accumulate session-storage entries.
-  chrome.storage.session.remove(jobId).catch(() => {});
-
+  // 'unsupported'/'error' jobs carry nothing worth protecting against a reload —
+  // clean them up immediately. An 'ok' job is cleaned up later, by showMain, once
+  // the user has actually committed to a folder (see showMain/startPick).
   if (job.status === 'unsupported') {
+    chrome.storage.session.remove(jobId).catch(() => {});
     showUnsupported();
     return;
   }
 
   if (job.status === 'error') {
+    chrome.storage.session.remove(jobId).catch(() => {});
     showError();
     return;
   }

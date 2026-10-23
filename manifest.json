@@ -3,6 +3,7 @@
   "name": "TradeMe House Image Downloader",
   "version": "0.1.0",
   "description": "Download all photos from a TradeMe residential listing page to a folder you pick.",
+  "minimum_chrome_version": "102",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["https://trademe.tmcdn.co.nz/*"],
   "background": {

@@ -18,5 +18,5 @@ it tedious to save every image by hand (right-click → save one at a time).
 
 ## Status
 
-Early development — see `handoff/BUILD-LOG.md` for current progress
-(Three Man Team workflow).
+Early development. Progress notes are kept in a local, gitignored `handoff/`
+directory (Three Man Team workflow) and aren't part of this repository.

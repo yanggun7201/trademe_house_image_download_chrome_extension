@@ -59,11 +59,19 @@ async function extractImageUrls() {
   const maxClicks = safetyTarget + 5;
   const pollTimeoutMs = 2000;
   const pollIntervalMs = 100;
+  // Independent of displayedCount: if several clicks in a row add no new unique
+  // photo, the carousel has wrapped around (or stalled) and more clicking won't
+  // help — stop early instead of always burning the full click budget. This
+  // matters most when displayedCount couldn't be parsed, since the size-based
+  // stop condition below never kicks in for that case.
+  const maxStaleClicks = 3;
   let clicks = 0;
+  let staleClicks = 0;
 
   while (
     (displayedCount === null || uniquePhotos.size < displayedCount) &&
-    clicks < maxClicks
+    clicks < maxClicks &&
+    staleClicks < maxStaleClicks
   ) {
     // Re-query the container and arrow each iteration rather than holding a stale
     // reference — the carousel is an Angular component that could re-render its wrapper.
@@ -90,7 +98,9 @@ async function extractImageUrls() {
 
     // Whether the poll changed something or timed out, re-scan everything
     // currently mounted and merge — treating a timeout as a no-op, not a stop.
+    const sizeBefore = uniquePhotos.size;
     mergeMountedSlides(uniquePhotos);
+    staleClicks = uniquePhotos.size > sizeBefore ? 0 : staleClicks + 1;
   }
 
   // Items without a parsed slideNumber keep their discovery order, appended after
@@ -105,7 +115,9 @@ async function extractImageUrls() {
       if (aHas !== bHas) return aHas ? -1 : 1;
       return a.index - b.index;
     })
-    .map(({ photo }) => photo.url);
+    // {url, id} pairs so tab.js never needs its own copy of the photo-ID regex —
+    // only this self-contained injected function needs one.
+    .map(({ photo }) => ({ url: photo.url, id: photo.id }));
 
   return { images, displayedCount };
 }
@@ -143,6 +155,10 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 
   tabsInFlight.add(tab.id);
+  // Extraction can take many seconds (carousel click-and-poll) with no other
+  // visible sign anything is happening — a badge on the icon is the cheapest
+  // signal that the click registered and work is in progress.
+  await chrome.action.setBadgeText({ tabId: tab.id, text: '…' });
   let job;
   try {
     const [injection] = await chrome.scripting.executeScript({
@@ -160,9 +176,11 @@ chrome.action.onClicked.addListener(async (tab) => {
   } catch (err) {
     // Injection genuinely failed (tab navigated away, page blocked it, etc.) — this
     // must stay distinguishable from "found 0 images on a real listing".
+    console.error('TradeMe image downloader: extraction failed', err);
     job = { jobId, status: 'error' };
   } finally {
     tabsInFlight.delete(tab.id);
+    await chrome.action.setBadgeText({ tabId: tab.id, text: '' });
   }
 
   await openResultTab(job);
