@@ -71,13 +71,11 @@ function renderProgress(downloaded, total, failures) {
   }
 }
 
+// Only ever called with a non-empty `images` — showMain() returns before
+// wiring up the picker at all when there's nothing to download.
 async function downloadAll(images, dirHandle) {
   const failures = [];
   let downloaded = 0;
-  if (images.length === 0) {
-    renderProgress(0, 0, failures);
-    return;
-  }
   for (let i = 0; i < images.length; i++) {
     const { url, id } = images[i];
     const photoId = id || String(i + 1);

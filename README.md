@@ -20,6 +20,11 @@ Keep the listing tab in the foreground (don't switch away) while the toolbar
 badge shows `…` — Chrome throttles timers and animations in background tabs,
 which can make the extraction take longer or stop early.
 
+Re-running the extension on the same listing into the same folder overwrites
+files that got the same name again; if the listing's photo order changed
+between runs, some files from the earlier run may be left behind under their
+old names.
+
 ## Install (unpacked, for development)
 
 1. Open `chrome://extensions`.

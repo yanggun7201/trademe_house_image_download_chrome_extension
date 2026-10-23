@@ -118,25 +118,37 @@ async function extractImageUrls() {
 // with each other's click-and-poll loop.
 const tabsInFlight = new Set();
 
+// Registered at the top level (not inside an event handler) so Chrome can wake a
+// terminated service worker to deliver this event — a listener added dynamically
+// inside openResultTab would vanish the moment the worker that created it is
+// recycled, which is the common case since a user rarely closes the result tab
+// within the same ~30s worker lifetime. The tabId->jobId mapping lives in
+// chrome.storage.session (not an in-memory Map) for the same reason: it must
+// survive a worker restart to still be there when this fires.
+chrome.tabs.onRemoved.addListener(async (closedTabId) => {
+  const { resultTabJobs } = await chrome.storage.session.get('resultTabJobs');
+  const jobId = resultTabJobs && resultTabJobs[closedTabId];
+  if (jobId === undefined) return;
+  delete resultTabJobs[closedTabId];
+  await chrome.storage.session.set({ resultTabJobs }).catch(() => {});
+  await chrome.storage.session.remove(jobId).catch(() => {});
+});
+
 // Writes the job and opens its result tab. Used for every outcome (unsupported, ok,
 // error) so there's exactly one place that can fail to show the user feedback.
 async function openResultTab(job) {
   try {
     await chrome.storage.session.set({ [job.jobId]: job });
     const resultTab = await chrome.tabs.create({ url: chrome.runtime.getURL(`tab.html?job=${job.jobId}`) });
-    // Belt-and-suspenders cleanup: tab.js already removes 'ok' jobs once the user
-    // commits to a folder, and 'unsupported'/'error'/'no_gallery' jobs immediately.
-    // This catches the case nothing else does — the user closes the result tab
-    // without ever picking a folder — so abandoned jobs can't accumulate in
-    // chrome.storage.session for the rest of the browser session.
+    // Cleans up a job if its result tab is ever closed without the user picking a
+    // folder — tab.js already removes 'ok' jobs once a folder is committed, and
+    // 'unsupported'/'error'/'no_gallery' jobs immediately, so this only matters
+    // for the abandoned-tab case. See the top-level chrome.tabs.onRemoved listener.
     if (resultTab && resultTab.id !== undefined) {
-      const onClosed = (closedTabId) => {
-        if (closedTabId === resultTab.id) {
-          chrome.storage.session.remove(job.jobId).catch(() => {});
-          chrome.tabs.onRemoved.removeListener(onClosed);
-        }
-      };
-      chrome.tabs.onRemoved.addListener(onClosed);
+      const { resultTabJobs } = await chrome.storage.session.get('resultTabJobs');
+      await chrome.storage.session.set({
+        resultTabJobs: { ...resultTabJobs, [resultTab.id]: job.jobId },
+      });
     }
   } catch (err) {
     // Nothing else can show the user feedback at this point (the tab that would
