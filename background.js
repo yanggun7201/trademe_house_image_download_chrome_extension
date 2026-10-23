@@ -1,8 +1,15 @@
 import { LISTING_URL_PATTERN, sortPhotosBySlide } from './lib/download-helpers.js';
 
+const LOG_PREFIX = '[TMHD]';
+
 // Injected directly into the listing tab via chrome.scripting.executeScript.
-// Must be fully self-contained — no references to anything outside this function.
+// Must be fully self-contained — no references to anything outside this function,
+// including LOG_PREFIX above — so it logs with its own inline literal instead.
+// These logs show up in the *listing tab's* DevTools console, not the service
+// worker's, since this function runs in the page.
 async function extractImageUrls() {
+  const LOG_PREFIX = '[TMHD]';
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -30,14 +37,18 @@ async function extractImageUrls() {
       .filter((photo) => photo.id);
   }
 
+  console.log(`${LOG_PREFIX} extractImageUrls: starting`);
+
   let displayedCount = null;
   const viewImagesBtn = document.querySelector('button[aria-label="View images"]');
   if (viewImagesBtn) {
     const match = viewImagesBtn.textContent.match(/(\d+)\s*Images?/i);
     if (match) displayedCount = parseInt(match[1], 10);
   }
+  console.log(`${LOG_PREFIX} displayedCount parsed as:`, displayedCount, '(raw button text:', viewImagesBtn ? viewImagesBtn.textContent : '<button not found>', ')');
 
   if (!document.querySelector('.platinum-hero-carousel')) {
+    console.log(`${LOG_PREFIX} .platinum-hero-carousel not found on this page — returning noGallery`);
     // Distinct from "found 0 images on a real listing" — this listing's photo
     // gallery isn't in the one DOM shape this extension knows how to read,
     // which is a meaningfully different thing to tell the user.
@@ -54,6 +65,7 @@ async function extractImageUrls() {
 
   const uniquePhotos = new Map();
   mergeMountedSlides(uniquePhotos);
+  console.log(`${LOG_PREFIX} baseline scan (before any clicks) found`, uniquePhotos.size, 'unique photo(s)');
 
   // displayedCount may fail to parse on an unexpected page layout; fall back to a
   // generous cap so the click loop still has a defined stop condition.
@@ -80,23 +92,33 @@ async function extractImageUrls() {
     // Re-query the container and arrow each iteration rather than holding a stale
     // reference — the carousel is an Angular component that could re-render its wrapper.
     const container = document.querySelector('.platinum-hero-carousel');
-    if (!container) break;
+    if (!container) {
+      console.log(`${LOG_PREFIX} carousel container disappeared mid-loop at click`, clicks, '— stopping');
+      break;
+    }
     const arrowBtn = container.querySelector(
       '.platinum-hero-carousel__arrow--right .platinum-hero-carousel__arrow-btn'
     );
-    if (!arrowBtn) break;
+    if (!arrowBtn) {
+      console.log(`${LOG_PREFIX} next-arrow button not found at click`, clicks, '— stopping');
+      break;
+    }
 
     const beforeUrls = scanSlides(container).map((photo) => photo.url);
     arrowBtn.click();
     clicks++;
 
-    const start = Date.now();
-    while (Date.now() - start < pollTimeoutMs) {
+    const pollStart = Date.now();
+    let pollChanged = false;
+    while (Date.now() - pollStart < pollTimeoutMs) {
       const currentUrls = scanSlides(container).map((photo) => photo.url);
       const changed =
         currentUrls.length !== beforeUrls.length ||
         currentUrls.some((url, i) => url !== beforeUrls[i]);
-      if (changed) break;
+      if (changed) {
+        pollChanged = true;
+        break;
+      }
       await sleep(pollIntervalMs);
     }
 
@@ -104,8 +126,28 @@ async function extractImageUrls() {
     // currently mounted and merge — treating a timeout as a no-op, not a stop.
     const sizeBefore = uniquePhotos.size;
     mergeMountedSlides(uniquePhotos);
-    staleClicks = uniquePhotos.size > sizeBefore ? 0 : staleClicks + 1;
+    const gained = uniquePhotos.size - sizeBefore;
+    staleClicks = gained > 0 ? 0 : staleClicks + 1;
+    console.log(
+      `${LOG_PREFIX} click ${clicks}/${maxClicks}:`,
+      pollChanged ? 'DOM changed within poll' : `poll timed out after ${pollTimeoutMs}ms`,
+      '— unique photos now', uniquePhotos.size, displayedCount !== null ? `/ ${displayedCount}` : '(total unknown)',
+      gained > 0 ? `(+${gained} new)` : `(no new photo, staleClicks=${staleClicks})`
+    );
   }
+
+  console.log(
+    `${LOG_PREFIX} extractImageUrls: done after`, clicks, 'click(s) —',
+    uniquePhotos.size, 'unique photo(s) found, displayedCount =', displayedCount,
+    ', stopped because:',
+    displayedCount !== null && uniquePhotos.size >= displayedCount
+      ? 'reached displayed count'
+      : clicks >= maxClicks
+        ? 'hit maxClicks safety cap'
+        : staleClicks >= maxStaleClicks
+          ? 'hit maxStaleClicks (no new photos for several clicks in a row)'
+          : 'carousel container/arrow disappeared'
+  );
 
   // Sorting happens back in background.js (see the click handler below) using
   // the shared, unit-tested sortPhotosBySlide — return the raw deduped photos
@@ -129,6 +171,7 @@ chrome.tabs.onRemoved.addListener(async (closedTabId) => {
   const { resultTabJobs } = await chrome.storage.session.get('resultTabJobs');
   const jobId = resultTabJobs && resultTabJobs[closedTabId];
   if (jobId === undefined) return;
+  console.log(`${LOG_PREFIX} result tab`, closedTabId, 'closed — cleaning up abandoned job', jobId);
   delete resultTabJobs[closedTabId];
   await chrome.storage.session.set({ resultTabJobs }).catch(() => {});
   await chrome.storage.session.remove(jobId).catch(() => {});
@@ -137,9 +180,11 @@ chrome.tabs.onRemoved.addListener(async (closedTabId) => {
 // Writes the job and opens its result tab. Used for every outcome (unsupported, ok,
 // error) so there's exactly one place that can fail to show the user feedback.
 async function openResultTab(job) {
+  console.log(`${LOG_PREFIX} openResultTab: writing job and opening result tab —`, job);
   try {
     await chrome.storage.session.set({ [job.jobId]: job });
     const resultTab = await chrome.tabs.create({ url: chrome.runtime.getURL(`tab.html?job=${job.jobId}`) });
+    console.log(`${LOG_PREFIX} openResultTab: result tab opened, tabId =`, resultTab && resultTab.id);
     // Cleans up a job if its result tab is ever closed without the user picking a
     // folder — tab.js already removes 'ok' jobs once a folder is committed, and
     // 'unsupported'/'error'/'no_gallery' jobs immediately, so this only matters
@@ -159,14 +204,20 @@ async function openResultTab(job) {
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
+  console.log(`${LOG_PREFIX} toolbar icon clicked — tabId:`, tab.id, 'url:', tab.url);
+
   if (!tab.id) return;
-  if (tabsInFlight.has(tab.id)) return;
+  if (tabsInFlight.has(tab.id)) {
+    console.log(`${LOG_PREFIX} tab`, tab.id, 'already has an extraction in flight — ignoring this click');
+    return;
+  }
 
   const jobId = crypto.randomUUID();
 
   // A missing tab.url (as well as a non-matching one) must still route through the
   // "unsupported" view rather than silently doing nothing.
   if (!tab.url || !LISTING_URL_PATTERN.test(tab.url)) {
+    console.log(`${LOG_PREFIX} URL did not match LISTING_URL_PATTERN — job`, jobId, 'is unsupported');
     await openResultTab({ jobId, status: 'unsupported' });
     return;
   }
@@ -178,16 +229,20 @@ chrome.action.onClicked.addListener(async (tab) => {
   // if the tab closed between the click and here, this rejects, and it must
   // never be allowed to take down the rest of the handler with it.
   await chrome.action.setBadgeText({ tabId: tab.id, text: '…' }).catch(() => {});
+  console.log(`${LOG_PREFIX} job`, jobId, '— injecting extractImageUrls into tab', tab.id, 'at', new Date().toISOString());
+  const extractionStart = Date.now();
   let job;
   try {
     const [injection] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: extractImageUrls,
     });
+    console.log(`${LOG_PREFIX} job`, jobId, `— executeScript resolved after ${Date.now() - extractionStart}ms; injection =`, injection);
     // A thrown/failed injection can surface as a missing or result-less entry here
     // rather than a rejected promise — treat that the same as a caught error so it
     // never gets conflated with "found 0 images on a real listing".
     if (!injection || !injection.result) {
+      console.log(`${LOG_PREFIX} job`, jobId, '— no usable injection result, treating as error');
       job = { jobId, status: 'error' };
     } else if (injection.result.noGallery) {
       // Distinct from "ok, found 0 images" — the page didn't have the expected
@@ -199,11 +254,12 @@ chrome.action.onClicked.addListener(async (tab) => {
         id: photo.id,
       }));
       job = { jobId, status: 'ok', images, displayedCount: injection.result.displayedCount };
+      console.log(`${LOG_PREFIX} job`, jobId, '— extraction ok:', images.length, 'image(s), displayedCount =', injection.result.displayedCount);
     }
   } catch (err) {
     // Injection genuinely failed (tab navigated away, page blocked it, etc.) — this
     // must stay distinguishable from "found 0 images on a real listing".
-    console.error('TradeMe image downloader: extraction failed', err);
+    console.error(`${LOG_PREFIX} job`, jobId, `— extraction threw after ${Date.now() - extractionStart}ms:`, err);
     job = { jobId, status: 'error' };
   } finally {
     tabsInFlight.delete(tab.id);
@@ -212,5 +268,6 @@ chrome.action.onClicked.addListener(async (tab) => {
     await chrome.action.setBadgeText({ tabId: tab.id, text: '' }).catch(() => {});
   }
 
+  console.log(`${LOG_PREFIX} job`, jobId, `— total time from click to result: ${Date.now() - extractionStart}ms, final status:`, job.status);
   await openResultTab(job);
 });

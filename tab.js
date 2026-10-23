@@ -1,5 +1,7 @@
 import { extFromContentType, extFromUrl } from './lib/download-helpers.js';
 
+const LOG_PREFIX = '[TMHD]';
+
 const unsupportedView = document.getElementById('unsupported-view');
 const expiredView = document.getElementById('expired-view');
 const errorView = document.getElementById('error-view');
@@ -76,6 +78,7 @@ function renderProgress(downloaded, total, failures) {
 async function downloadAll(images, dirHandle) {
   const failures = [];
   let downloaded = 0;
+  console.log(`${LOG_PREFIX} downloadAll: starting,`, images.length, 'image(s) to download');
   for (let i = 0; i < images.length; i++) {
     const { url, id } = images[i];
     const photoId = id || String(i + 1);
@@ -85,6 +88,7 @@ async function downloadAll(images, dirHandle) {
     let createdNewFile = false;
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), 15000);
+    console.log(`${LOG_PREFIX} downloading image ${i + 1}/${images.length}:`, url);
     try {
       const response = await fetch(url, { signal: abortController.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -112,18 +116,21 @@ async function downloadAll(images, dirHandle) {
       await writable.close();
       writable = null;
       downloaded++;
+      console.log(`${LOG_PREFIX} image ${i + 1}/${images.length} saved as`, filename, `(${blob.size} bytes, ${contentType})`);
     } catch (err) {
       if (writable) await writable.abort().catch(() => {});
       // Only clean up a file this attempt actually created — never remove one
       // that predates this run.
       if (fileHandle && createdNewFile) await dirHandle.removeEntry(filename).catch(() => {});
       const message = err.name === 'AbortError' ? 'Timed out' : err.message || String(err);
+      console.warn(`${LOG_PREFIX} image ${i + 1}/${images.length} FAILED:`, message, err);
       failures.push({ index: i + 1, error: message });
     } finally {
       clearTimeout(timeoutId);
     }
     renderProgress(downloaded, images.length, failures);
   }
+  console.log(`${LOG_PREFIX} downloadAll: finished —`, downloaded, 'succeeded,', failures.length, 'failed');
 }
 
 function showMain(job) {
@@ -147,6 +154,7 @@ function showMain(job) {
       // (implicitly, via getFileHandle/createWritable) risks a second permission
       // request after the click's transient user activation has expired.
       const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      console.log(`${LOG_PREFIX} folder picked:`, dirHandle.name);
       // Only clean up the job once the user has actually committed to a folder —
       // keeping it until now means an accidental reload (or cancelling the
       // picker) while still deciding doesn't lose the whole carousel-driven
@@ -159,6 +167,7 @@ function showMain(job) {
       retryBtn.hidden = true;
       await downloadAll(job.images, dirHandle);
     } catch (err) {
+      console.warn(`${LOG_PREFIX} startPick failed:`, err);
       if (err.name === 'AbortError') {
         statusText.textContent = 'No folder selected.';
       } else {
@@ -178,6 +187,7 @@ function showMain(job) {
 
 async function init() {
   const jobId = new URLSearchParams(location.search).get('job');
+  console.log(`${LOG_PREFIX} tab init: jobId from URL =`, jobId);
   if (!jobId) {
     showExpired();
     return;
@@ -185,6 +195,7 @@ async function init() {
 
   const stored = await chrome.storage.session.get(jobId);
   const job = stored[jobId];
+  console.log(`${LOG_PREFIX} tab init: job loaded from storage =`, job);
   if (!job) {
     showExpired();
     return;
