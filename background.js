@@ -206,11 +206,19 @@ chrome.tabs.onRemoved.addListener(async (closedTabId) => {
 
 // Writes the job and opens its result tab. Used for every outcome (unsupported, ok,
 // error) so there's exactly one place that can fail to show the user feedback.
-async function openResultTab(job) {
+// `sourceTab` (optional) is the tab the icon was clicked from — when given, the
+// result tab opens immediately to its right instead of at the end of the tab
+// strip, and is marked as "opened from" it.
+async function openResultTab(job, sourceTab) {
   console.log(`${LOG_PREFIX} openResultTab: writing job and opening result tab —`, job);
   try {
     await chrome.storage.session.set({ [job.jobId]: job });
-    const resultTab = await chrome.tabs.create({ url: chrome.runtime.getURL(`tab.html?job=${job.jobId}`) });
+    const createOptions = { url: chrome.runtime.getURL(`tab.html?job=${job.jobId}`) };
+    if (sourceTab && sourceTab.index !== undefined) {
+      createOptions.index = sourceTab.index + 1;
+      createOptions.openerTabId = sourceTab.id;
+    }
+    const resultTab = await chrome.tabs.create(createOptions);
     console.log(`${LOG_PREFIX} openResultTab: result tab opened, tabId =`, resultTab && resultTab.id);
     // Cleans up a job if its result tab is ever closed without the user picking a
     // folder — tab.js already removes 'ok' jobs once a folder is committed, and
@@ -245,7 +253,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   // "unsupported" view rather than silently doing nothing.
   if (!tab.url || !LISTING_URL_PATTERN.test(tab.url)) {
     console.log(`${LOG_PREFIX} URL did not match LISTING_URL_PATTERN — job`, jobId, 'is unsupported');
-    await openResultTab({ jobId, status: 'unsupported' });
+    await openResultTab({ jobId, status: 'unsupported' }, tab);
     return;
   }
 
@@ -302,5 +310,11 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 
   console.log(`${LOG_PREFIX} job`, jobId, `— total time from click to result: ${Date.now() - extractionStart}ms, final status:`, job.status);
-  await openResultTab(job);
+  // Extraction can take a while, during which the user may have moved/closed
+  // tabs — re-fetch the source tab's current index rather than trusting the
+  // one captured at click time, so the result tab still lands right next to
+  // it. Falls back to the originally captured tab (or no positioning at all,
+  // if it's gone) if this fails.
+  const currentSourceTab = await chrome.tabs.get(tab.id).catch(() => tab);
+  await openResultTab(job, currentSourceTab);
 });
