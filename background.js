@@ -52,10 +52,33 @@ async function extractImageUrls() {
   console.log(`${LOG_PREFIX} displayedCount parsed as:`, displayedCount, '(raw button text:', viewImagesBtn ? viewImagesBtn.textContent : '<button not found>', ')');
 
   if (!document.querySelector('.platinum-hero-carousel')) {
-    console.log(`${LOG_PREFIX} .platinum-hero-carousel not found on this page — returning noGallery`);
+    // Not every listing uses the premium "platinum" carousel. Standard-tier
+    // listings use a different component (tm-gallery-*) whose thumbnail strip
+    // — unlike the platinum carousel — isn't virtualized: every photo's
+    // thumbnail is already in the static DOM, so no clicking/polling is
+    // needed at all. Build full-size URLs from the thumbnail IDs rather than
+    // trusting the small thumbnail src directly.
+    const thumbImgs = document.querySelectorAll(
+      '.tm-gallery-thumbnail-slider__item img.tm-gallery-view__thumbnail'
+    );
+    if (thumbImgs.length > 0) {
+      console.log(`${LOG_PREFIX} .platinum-hero-carousel not found, but found`, thumbImgs.length, 'standard-tier thumbnail(s) — using those');
+      const photos = Array.from(thumbImgs)
+        .map((img, index) => ({
+          id: getPhotoId(img.src),
+          url: img.src.replace(/\/photoserver\/[^/]+\//, '/photoserver/plus/'),
+          slideNumber: index,
+        }))
+        .filter((photo) => photo.id);
+      // The thumbnail strip holds every photo already, so this count is exact —
+      // overrides the (likely absent, for this listing type) "View images" count.
+      return { photos, displayedCount: photos.length, noGallery: false, address };
+    }
+
+    console.log(`${LOG_PREFIX} no recognized gallery component found on this page — returning noGallery`);
     // Distinct from "found 0 images on a real listing" — this listing's photo
-    // gallery isn't in the one DOM shape this extension knows how to read,
-    // which is a meaningfully different thing to tell the user.
+    // gallery isn't in a DOM shape this extension knows how to read, which is
+    // a meaningfully different thing to tell the user.
     return { photos: [], displayedCount, noGallery: true, address };
   }
 
