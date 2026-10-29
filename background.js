@@ -39,9 +39,13 @@ async function extractImageUrls() {
 
   console.log(`${LOG_PREFIX} extractImageUrls: starting`);
 
-  const addressEl = document.querySelector('.property-info__address');
+  // Different listing templates use different classes for the address heading —
+  // try each known one in order.
+  const addressEl = document.querySelector(
+    '.property-info__address, .tm-property-listing-address__text'
+  );
   const address = addressEl ? addressEl.textContent.trim().replace(/\s+/g, ' ') : null;
-  console.log(`${LOG_PREFIX} address parsed as:`, address);
+  console.log(`${LOG_PREFIX} address parsed as:`, address, addressEl ? `(via .${addressEl.className.split(' ')[0]})` : '');
 
   let displayedCount = null;
   const viewImagesBtn = document.querySelector('button[aria-label="View images"]');
